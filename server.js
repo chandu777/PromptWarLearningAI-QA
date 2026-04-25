@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import path from 'path';
@@ -13,7 +14,39 @@ const PORT = process.env.PORT || 8080;
 
 // ── Security: Strict payload size limit (prevents large prompt injection attacks) ──
 app.use(express.json({ limit: '50kb' }));
-app.use(cors());
+
+// ── Security: Strict CORS — only allow requests from our own domains ────────
+const ALLOWED_ORIGINS = [
+    'https://ai-learning-app-155641208835.asia-east1.run.app',
+    'http://localhost:5173',
+    'http://localhost:8080',
+];
+app.use(cors({
+    origin: (origin, callback) => {
+        // Allow server-to-server requests (no origin) and whitelisted domains
+        if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+            callback(null, true);
+        } else {
+            log.warn('CORS blocked request from unauthorized origin', { origin });
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type'],
+}));
+
+// ── Security: Rate Limiter — max 30 API calls per minute per IP ──────────────
+const apiLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req, res) => {
+        log.warn('Rate limit exceeded', { ip: req.ip, path: req.path });
+        res.status(429).json({ error: 'Too many requests. Please slow down and try again in a minute.' });
+    },
+});
+app.use('/api/', apiLimiter);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,12 +74,36 @@ app.use((req, _res, next) => {
     next();
 });
 
-// ── Security: Input Validation Helper ────────────────────────────────────────
+// ── Security: Model Whitelist — only allow requests for known valid models ────
+// This list is refreshed at startup from the Google API to stay current
+let ALLOWED_MODELS = new Set(['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro']);
+
+const refreshAllowedModels = async () => {
+    try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        const data = await response.json();
+        if (!data.error) {
+            ALLOWED_MODELS = new Set(
+                data.models
+                    .filter(m => m.supportedGenerationMethods.includes('generateContent'))
+                    .map(m => m.name.replace('models/', ''))
+            );
+            log.info('Model whitelist refreshed', { count: ALLOWED_MODELS.size });
+        }
+    } catch (e) {
+        log.warn('Could not refresh model whitelist, using defaults', { error: e.message });
+    }
+};
+
+// Refresh once at startup
+refreshAllowedModels();
+
 const MAX_PROMPT_LENGTH = 8000;
 const MAX_TOPICS_COUNT = 50;
 
 const validateChatPayload = (selectedModel, finalPrompt) => {
     if (!selectedModel || typeof selectedModel !== 'string') return 'Invalid model specified.';
+    if (!ALLOWED_MODELS.has(selectedModel)) return `Model '${selectedModel}' is not permitted.`;
     if (!finalPrompt || typeof finalPrompt !== 'string') return 'Prompt is required.';
     if (finalPrompt.length > MAX_PROMPT_LENGTH) return `Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters.`;
     return null;
