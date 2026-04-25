@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, query, where, getDocs, orderBy, serverTimestamp, doc, setDoc } from "firebase/firestore";
@@ -37,6 +37,7 @@ function App() {
 
   const [recommendations, setRecommendations] = useState([]);
   const [loadingRecs, setLoadingRecs] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const chatEndRef = useRef(null);
 
@@ -68,24 +69,24 @@ function App() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     signOut(auth);
     setChatHistory([]);
     setSessions([]);
     setCurrentSessionId(null);
-  };
+    setStep('login');
+  }, []);
 
-  const loadUserSessions = async (userId) => {
+  const loadUserSessions = useCallback(async (userId) => {
     try {
-      // Removed orderBy to avoid requiring a Firebase Composite Index which takes time to build
-      const q = query(collection(db, "chats"), where("userId", "==", userId));
+      const q = query(collection(db, 'chats'), where('userId', '==', userId));
       const querySnapshot = await getDocs(q);
       const loadedSessions = [];
-      querySnapshot.forEach((doc) => {
-        loadedSessions.push({ id: doc.id, ...doc.data() });
+      querySnapshot.forEach((docSnap) => {
+        loadedSessions.push({ id: docSnap.id, ...docSnap.data() });
       });
 
-      // Sort the sessions client-side by newest first
+      // Sort client-side by newest first (avoids needing a Firestore composite index)
       loadedSessions.sort((a, b) => {
         const timeA = a.createdAt?.toMillis() || 0;
         const timeB = b.createdAt?.toMillis() || 0;
@@ -93,17 +94,16 @@ function App() {
       });
 
       setSessions(loadedSessions);
-      // Fetch personalized AI recommendations based on loaded history
       loadRecommendations(loadedSessions);
     } catch (e) {
-      console.error("Could not load history from Firebase:", e.message);
+      console.error('Could not load history from Firebase:', e.message);
     }
-  };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadRecommendations = async (pastSessions) => {
+  const loadRecommendations = useCallback(async (pastSessions) => {
     setLoadingRecs(true);
     try {
-      const pastTopics = pastSessions.map(s => s.title);
+      const pastTopics = pastSessions.map(s => s.title).filter(Boolean);
       const response = await fetch('/api/recommendations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -114,11 +114,11 @@ function App() {
         setRecommendations(data.recommendations);
       }
     } catch (e) {
-      console.error("Failed to load recommendations", e);
+      console.error('Failed to load recommendations:', e.message);
     } finally {
       setLoadingRecs(false);
     }
-  };
+  }, []);
 
   const startNewChat = () => {
     setChatHistory([]);
@@ -126,46 +126,36 @@ function App() {
     setStep('onboarding');
   };
 
-  const loadChatSession = (session) => {
+  const loadChatSession = useCallback((session) => {
     setCurrentSessionId(session.id);
     setChatHistory(session.messages || []);
     setExperience(session.experienceLevel || 'Beginner');
+    setErrorMessage('');
     setStep('chat');
-  };
+  }, []);
 
-  const savePreferenceToFirebase = async (level) => {
-    console.log("[DEBUG] Starting savePreferenceToFirebase for level:", level);
-    if (!user) {
-      console.log("[DEBUG] No user logged in, skipping Firebase save.");
-      return;
-    }
+  const savePreferenceToFirebase = useCallback(async (level) => {
+    if (!user) return;
     try {
-      console.log("[DEBUG] Attempting to setDoc in Firestore...");
-      await setDoc(doc(db, "user_preferences", user.uid), {
+      await setDoc(doc(db, 'user_preferences', user.uid), {
         experienceLevel: level,
         updatedAt: serverTimestamp()
       }, { merge: true });
-      console.log("[DEBUG] Successfully saved preference to Firestore.");
     } catch (e) {
-      console.error("[DEBUG] Firebase Error saving preference: ", e.message);
+      console.error('Firebase: Failed to save preference:', e.message);
     }
-  };
+  }, [user]);
 
-  const initializeAI = async (expLevel) => {
-    console.log("[DEBUG] Starting initializeAI with level:", expLevel);
+  const initializeAI = useCallback(async (expLevel) => {
     setIsLoading(true);
+    setErrorMessage('');
     try {
-      console.log("[DEBUG] Fetching available models from /api/models...");
       const response = await fetch('/api/models');
-      console.log("[DEBUG] Fetch response status:", response.status);
-
       const data = await response.json();
-      console.log("[DEBUG] Fetch response data:", data);
 
       if (data.error) throw new Error(data.error);
 
       const models = data.models;
-      console.log("[DEBUG] Available models:", models);
       setAvailableModels(models);
 
       let defaultModel = models[0];
@@ -184,14 +174,13 @@ function App() {
       ];
       setChatHistory(initialHistory);
       setStep('chat');
-      console.log("[DEBUG] initializeAI completed successfully. Transitioning to chat.");
     } catch (error) {
-      console.error("[DEBUG] initializeAI Catch Error:", error);
-      alert("Failed to connect to backend: " + error.message);
+      console.error('initializeAI error:', error.message);
+      setErrorMessage('Failed to connect to the AI backend. Please try again.');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [user]);
 
   const handleSuggestedClick = async (topic) => {
     const defaultExp = experience || 'Beginner';
@@ -261,18 +250,15 @@ function App() {
       }
     } catch (e) {
       console.error(e);
-      alert("Error processing AI suggestion.");
+      setErrorMessage('Failed to start AI session. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleExperienceSelect = (level) => {
-    console.log("[DEBUG] Button clicked! Selected level:", level);
     setExperience(level);
-    console.log("[DEBUG] Calling savePreferenceToFirebase in background.");
     savePreferenceToFirebase(level);
-    console.log("[DEBUG] Calling initializeAI.");
     initializeAI(level);
   };
 
@@ -439,6 +425,14 @@ function App() {
                   {isLoading ? 'Connecting...' : 'Expert'}
                 </button>
               </div>
+
+              {isLoading && <div className="dot-flashing" style={{ margin: '1.5rem auto' }} role="status" aria-label="Connecting to AI backend"></div>}
+
+              {errorMessage && (
+                <p role="alert" style={{ color: '#f87171', marginTop: '1rem', textAlign: 'center', fontSize: '0.9rem' }}>
+                  &#9888; {errorMessage}
+                </p>
+              )}
             </section>
           </div>
         )}
