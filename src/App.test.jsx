@@ -1,73 +1,54 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import App from './App';
 
-// Mock the environment variable
-vi.stubEnv('VITE_GEMINI_API_KEY', '');
+// Mock fetch for backend proxy
+global.fetch = vi.fn();
 
-// Mock the Gemini API module to prevent actual network calls during tests
-vi.mock('@google/generative-ai', () => ({
-  GoogleGenerativeAI: vi.fn(() => ({
-    getGenerativeModel: vi.fn(() => ({
-      generateContent: vi.fn().mockResolvedValue({
-        response: { text: () => 'Mocked AI Response' }
-      })
-    }))
-  }))
+// Mock Firebase
+vi.mock('firebase/app', () => ({
+  initializeApp: vi.fn(),
 }));
 
-// Mock fetch for the dynamic model loading
-global.fetch = vi.fn(() =>
-  Promise.resolve({
-    json: () => Promise.resolve({
-      models: [
-        { name: 'models/gemini-pro', supportedGenerationMethods: ['generateContent'] },
-        { name: 'models/gemini-1.5-flash', supportedGenerationMethods: ['generateContent'] }
-      ]
-    })
-  })
-);
+vi.mock('firebase/firestore', () => ({
+  getFirestore: vi.fn(),
+  collection: vi.fn(),
+  addDoc: vi.fn(),
+  query: vi.fn(),
+  where: vi.fn(),
+  getDocs: vi.fn(),
+  orderBy: vi.fn(),
+  serverTimestamp: vi.fn(),
+  doc: vi.fn(),
+  setDoc: vi.fn(),
+}));
+
+vi.mock('firebase/auth', () => ({
+  getAuth: vi.fn(),
+  signInWithPopup: vi.fn(),
+  GoogleAuthProvider: vi.fn(),
+  onAuthStateChanged: vi.fn((auth, callback) => {
+    // Simulate an authenticated user immediately for tests
+    callback({ uid: '123', displayName: 'Test User', email: 'test@example.com' });
+    return () => {}; // unsubscribe function
+  }),
+  signOut: vi.fn(),
+}));
 
 describe('Universal Learning AI - App Component', () => {
-  
-  it('renders the initial onboarding screen correctly', () => {
-    render(<App />);
-    expect(screen.getByText(/Welcome! Let's personalize your path./i)).toBeInTheDocument();
-    expect(screen.getByText('Beginner')).toBeInTheDocument();
-    expect(screen.getByText('Intermediate')).toBeInTheDocument();
-    expect(screen.getByText('Expert')).toBeInTheDocument();
-  });
-
-  it('progresses to setup screen if no API key is in .env', () => {
-    render(<App />);
-    const beginnerBtn = screen.getByText('Beginner');
-    fireEvent.click(beginnerBtn);
-    
-    // Check if it moved to setup step
-    expect(screen.getByText(/Just one more step/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Paste your Gemini API Key here')).toBeInTheDocument();
-  });
-
-  it('progresses from setup to chat when a mock key is entered', async () => {
-    render(<App />);
-    // Step 1: Click Beginner
-    fireEvent.click(screen.getByText('Beginner'));
-    
-    // Step 2: Enter API Key and Submit
-    const input = screen.getByPlaceholderText('Paste your Gemini API Key here');
-    fireEvent.change(input, { target: { value: 'fake-api-key' } });
-    
-    const startBtn = screen.getByText('Start Learning →');
-    fireEvent.click(startBtn);
-
-    // Wait for the fetch call and transition to Chat UI
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('Ask me to explain any concept...')).toBeInTheDocument();
+  beforeEach(() => {
+    global.fetch.mockReset();
+    global.fetch.mockImplementation((url) => {
+      if (url === '/api/models') return Promise.resolve({ json: () => Promise.resolve({ models: ['gemini-pro'] }) });
+      if (url === '/api/chat') return Promise.resolve({ json: () => Promise.resolve({ text: 'Mock response' }) });
+      return Promise.resolve({ json: () => Promise.resolve({}) });
     });
-    
-    // Verify greeting message and dynamic model string
-    expect(screen.getByText(/Hi! I'm your AI Learning Assistant/i)).toBeInTheDocument();
-    expect(screen.getByText(/gemini-1.5-flash/i)).toBeInTheDocument();
   });
 
+  it('renders onboarding after fake login', async () => {
+    render(<App />);
+    await waitFor(() => {
+        expect(screen.getByText(/Ready to learn, Test/i)).toBeInTheDocument();
+    });
+  });
 });

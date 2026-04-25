@@ -1,31 +1,36 @@
-# Stage 1: Build the React Application
-FROM node:18-alpine as build
+# Stage 1: Build the optimized React frontend
+FROM node:18-alpine AS build
 
 WORKDIR /app
-
-# Copy package files and install dependencies
 COPY package*.json ./
 RUN npm install
 
-# Copy the rest of the application
+# Copy the source code
 COPY . .
 
-# Build the Vite application (This will bake the VITE_ variables into the JS files)
+# Build the frontend. The API key is NO LONGER needed here for security!
 RUN npm run build
 
-# Stage 2: Serve the application with Nginx
-FROM nginx:alpine
+# Stage 2: Create the Secure Production Environment
+FROM node:18-alpine
 
-# Remove default nginx config
-RUN rm /etc/nginx/conf.d/default.conf
+WORKDIR /app
 
-# Copy our custom nginx config for Google Cloud Run compatibility
-COPY nginx.conf /etc/nginx/conf.d/
+# Only install production backend dependencies for efficiency and security
+COPY package*.json ./
+RUN npm install --omit=dev
 
-# Copy the build output from Stage 1
-COPY --from=build /app/dist /usr/share/nginx/html
+# Copy backend logic
+COPY server.js ./
 
-# Expose port 8080 (Standard for Google Cloud Run)
+# Copy optimized frontend assets from Stage 1
+COPY --from=build /app/dist ./dist
+
+# Security: Run as a non-root user
+USER node
+
+# Port expected by Google Cloud Run
+ENV PORT=8080
 EXPOSE 8080
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["node", "server.js"]
