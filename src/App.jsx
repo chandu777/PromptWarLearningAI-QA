@@ -24,17 +24,17 @@ function App() {
   const [authChecking, setAuthChecking] = useState(true);
   const [step, setStep] = useState('login'); // login -> onboarding -> chat
   const [experience, setExperience] = useState('');
-  
+
   const [chatHistory, setChatHistory] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  
+
   const [availableModels, setAvailableModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState('');
-  
+
   const [sessions, setSessions] = useState([]); // List of past questions/sessions
   const [currentSessionId, setCurrentSessionId] = useState(null);
-  
+
   const [recommendations, setRecommendations] = useState([]);
   const [loadingRecs, setLoadingRecs] = useState(false);
 
@@ -84,14 +84,14 @@ function App() {
       querySnapshot.forEach((doc) => {
         loadedSessions.push({ id: doc.id, ...doc.data() });
       });
-      
+
       // Sort the sessions client-side by newest first
       loadedSessions.sort((a, b) => {
         const timeA = a.createdAt?.toMillis() || 0;
         const timeB = b.createdAt?.toMillis() || 0;
         return timeB - timeA;
       });
-      
+
       setSessions(loadedSessions);
       // Fetch personalized AI recommendations based on loaded history
       loadRecommendations(loadedSessions);
@@ -136,8 +136,8 @@ function App() {
   const savePreferenceToFirebase = async (level) => {
     console.log("[DEBUG] Starting savePreferenceToFirebase for level:", level);
     if (!user) {
-        console.log("[DEBUG] No user logged in, skipping Firebase save.");
-        return;
+      console.log("[DEBUG] No user logged in, skipping Firebase save.");
+      return;
     }
     try {
       console.log("[DEBUG] Attempting to setDoc in Firestore...");
@@ -158,38 +158,38 @@ function App() {
       console.log("[DEBUG] Fetching available models from /api/models...");
       const response = await fetch('/api/models');
       console.log("[DEBUG] Fetch response status:", response.status);
-      
+
       const data = await response.json();
       console.log("[DEBUG] Fetch response data:", data);
-      
+
       if (data.error) throw new Error(data.error);
-      
+
       const models = data.models;
       console.log("[DEBUG] Available models:", models);
       setAvailableModels(models);
-      
+
       let defaultModel = models[0];
       if (models.includes('gemini-2.5-flash')) defaultModel = 'gemini-2.5-flash';
       else if (models.includes('gemini-2.0-flash')) defaultModel = 'gemini-2.0-flash';
       else if (models.includes('gemini-1.5-flash')) defaultModel = 'gemini-1.5-flash';
       else if (models.includes('gemini-pro')) defaultModel = 'gemini-pro';
-      
+
       setSelectedModel(defaultModel);
-      
+
       const initialHistory = [
-        { 
-          role: 'assistant', 
-          content: `Hi ${user?.displayName?.split(' ')[0] || ''}! I'm your AI Learning Assistant. You selected **${expLevel}** level.\n\nI securely connected to the \`${defaultModel}\` model.\n\nWhat concept or topic would you like to learn today?` 
+        {
+          role: 'assistant',
+          content: `Hi ${user?.displayName?.split(' ')[0] || ''}! I'm your AI Learning Assistant. You selected **${expLevel}** level.\n\nI securely connected to the \`${defaultModel}\` model.\n\nWhat concept or topic would you like to learn today?`
         }
       ];
       setChatHistory(initialHistory);
       setStep('chat');
       console.log("[DEBUG] initializeAI completed successfully. Transitioning to chat.");
     } catch (error) {
-       console.error("[DEBUG] initializeAI Catch Error:", error);
-       alert("Failed to connect to backend: " + error.message);
+      console.error("[DEBUG] initializeAI Catch Error:", error);
+      alert("Failed to connect to backend: " + error.message);
     } finally {
-       setIsLoading(false);
+      setIsLoading(false);
     }
   };
 
@@ -197,10 +197,10 @@ function App() {
     const defaultExp = experience || 'Beginner';
     setExperience(defaultExp);
     savePreferenceToFirebase(defaultExp);
-    
+
     setIsLoading(true);
     setStep('chat');
-    
+
     try {
       // 1. Get Models
       const response = await fetch('/api/models');
@@ -208,15 +208,15 @@ function App() {
       const models = data.models;
       console.log("[DEBUG] Available models:", models);
       setAvailableModels(models);
-      
+
       let defaultModel = models.includes('gemini-2.5-flash') ? 'gemini-2.5-flash' : models[0];
       setSelectedModel(defaultModel);
-      
+
       // 2. Setup initial history simulating the user asking about the topic
       const initialHistory = [
-        { 
-          role: 'assistant', 
-          content: `Hi ${user?.displayName?.split(' ')[0] || ''}! I'm your AI Learning Assistant. You selected **${defaultExp}** level.\n\nI securely connected to the \`${defaultModel}\` model.\n\nWhat concept or topic would you like to learn today?` 
+        {
+          role: 'assistant',
+          content: `Hi ${user?.displayName?.split(' ')[0] || ''}! I'm your AI Learning Assistant. You selected **${defaultExp}** level.\n\nI securely connected to the \`${defaultModel}\` model.\n\nWhat concept or topic would you like to learn today?`
         },
         { role: 'user', content: topic }
       ];
@@ -239,7 +239,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ selectedModel: defaultModel, finalPrompt })
       });
-      
+
       const chatData = await chatResponse.json();
       if (chatData.error) throw new Error(chatData.error);
 
@@ -248,22 +248,22 @@ function App() {
 
       // 4. Save to Firebase
       if (user) {
-         addDoc(collection(db, "chats"), {
-            userId: user.uid,
-            title: topic.substring(0, 30),
-            experienceLevel: defaultExp,
-            messages: updatedHistory,
-            createdAt: serverTimestamp()
-          }).then(newDoc => {
-            setCurrentSessionId(newDoc.id);
-            setSessions(prev => [{ id: newDoc.id, title: topic.substring(0, 30), messages: updatedHistory }, ...prev]);
-          }).catch(e => console.error("Firebase save failed", e));
+        addDoc(collection(db, "chats"), {
+          userId: user.uid,
+          title: topic.substring(0, 30),
+          experienceLevel: defaultExp,
+          messages: updatedHistory,
+          createdAt: serverTimestamp()
+        }).then(newDoc => {
+          setCurrentSessionId(newDoc.id);
+          setSessions(prev => [{ id: newDoc.id, title: topic.substring(0, 30), messages: updatedHistory }, ...prev]);
+        }).catch(e => console.error("Firebase save failed", e));
       }
     } catch (e) {
-       console.error(e);
-       alert("Error processing AI suggestion.");
+      console.error(e);
+      alert("Error processing AI suggestion.");
     } finally {
-       setIsLoading(false);
+      setIsLoading(false);
     }
   };
 
@@ -282,7 +282,7 @@ function App() {
 
     const userMsg = inputMessage;
     setInputMessage('');
-    
+
     const newHistory = [...chatHistory, { role: 'user', content: userMsg }];
     setChatHistory(newHistory);
     setIsLoading(true);
@@ -304,7 +304,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ selectedModel, finalPrompt })
       });
-      
+
       const data = await response.json();
       if (data.error) throw new Error(data.error);
 
@@ -349,16 +349,21 @@ function App() {
     <div className="layout-wrapper">
       {/* SIDEBAR FOR HISTORY */}
       {user && (
-        <aside className="sidebar">
+        <aside className="sidebar" aria-label="Learning history sidebar">
           <div className="sidebar-header">
             <h3>Learning History</h3>
-            <button className="new-chat-btn" onClick={startNewChat}>+ New Concept</button>
+            <button className="new-chat-btn" onClick={startNewChat} aria-label="Start a new concept">+ New Concept</button>
           </div>
-          <ul className="history-list">
+          <ul className="history-list" aria-label="Past learning sessions">
             {sessions.map(session => (
-              <li key={session.id} 
-                  className={currentSessionId === session.id ? 'active' : ''} 
-                  onClick={() => loadChatSession(session)}>
+              <li key={session.id}
+                className={currentSessionId === session.id ? 'active' : ''}
+                onClick={() => loadChatSession(session)}
+                onKeyDown={(e) => e.key === 'Enter' && loadChatSession(session)}
+                tabIndex="0"
+                role="button"
+                aria-label={`Load session: ${session.title || 'Untitled Session'}`}
+                aria-current={currentSessionId === session.id ? 'true' : undefined}>
                 {session.title || "Untitled Session"}
               </li>
             ))}
@@ -366,10 +371,10 @@ function App() {
           </ul>
           <div className="sidebar-footer">
             <div className="user-info">
-               {user.photoURL && <img src={user.photoURL} alt="Profile" className="avatar" />}
-               <span>{user.displayName?.split(' ')[0] || user.email}</span>
+              {user.photoURL && <img src={user.photoURL} alt={`${user.displayName}'s profile picture`} className="avatar" />}
+              <span aria-label={`Logged in as ${user.displayName}`}>{user.displayName?.split(' ')[0] || user.email}</span>
             </div>
-            <button className="logout-btn" onClick={handleLogout}>Log Out</button>
+            <button className="logout-btn" onClick={handleLogout} aria-label="Log out of your account">Log Out</button>
           </div>
         </aside>
       )}
@@ -385,7 +390,7 @@ function App() {
               <button className="google-btn" onClick={loginWithGoogle}>
                 Sign in with Google
               </button>
-              <p style={{marginTop: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)'}}>
+              <p style={{ marginTop: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 *Requires Firebase config to be added to `.env`
               </p>
             </div>
@@ -393,38 +398,44 @@ function App() {
         )}
 
         {step === 'onboarding' && user && (
-          <div className="app-container" style={{maxWidth: '900px'}}>
+          <div className="app-container" style={{ maxWidth: '900px' }}>
             <header><h1 tabIndex="0">Universal Learning AI</h1></header>
+            <h2 style={{ textAlign: 'center', marginBottom: '2rem', color: 'var(--text-bright)' }}>Ready to learn, {user.displayName?.split(' ')[0] || 'Student'}?</h2>
 
-            <section className="card" style={{ marginBottom: '1.5rem' }}>
-               <h2>Suggested for you</h2>
-               <p>Powered by Google Gemini API</p>
-               {loadingRecs ? (
-                 <div className="dot-flashing" style={{ margin: '2rem auto' }}></div>
-               ) : (
-                 <div className="recent-topics">
-                   {recommendations.map((topic, idx) => (
-                     <div key={idx} className="topic-card" style={{borderColor: 'var(--primary)'}} onClick={() => handleSuggestedClick(topic)} role="button" tabIndex="0">
-                        <h4 style={{color: '#c4b5fd'}}>{topic}</h4>
-                        <span className="badge">+ Explore</span>
-                     </div>
-                   ))}
-                 </div>
-               )}
+            <section className="card" style={{ marginBottom: '1.5rem' }} aria-labelledby="suggestions-heading">
+              <h2 id="suggestions-heading">Suggested for you</h2>
+              <p>Powered by Google Gemini API</p>
+              {loadingRecs ? (
+                <div className="dot-flashing" style={{ margin: '2rem auto' }} role="status" aria-label="Loading recommendations"></div>
+              ) : (
+                <div className="recent-topics" role="list">
+                  {recommendations.map((topic, idx) => (
+                    <div key={idx} className="topic-card" style={{ borderColor: 'var(--primary)' }}
+                      onClick={() => handleSuggestedClick(topic)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSuggestedClick(topic)}
+                      role="listitem button"
+                      tabIndex="0"
+                      aria-label={`Explore topic: ${topic}`}>
+                      <h4 style={{ color: '#c4b5fd' }}>{topic}</h4>
+                      <span className="badge" aria-hidden="true">+ Explore</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
 
-            <section className="card">
-              <h2>Start a new concept manually</h2>
+            <section className="card" aria-labelledby="manual-heading">
+              <h2 id="manual-heading">Start a new concept manually</h2>
               <p>Select your experience level to begin a new personalized session:</p>
-              
-              <div className="options-row">
-                <button onClick={() => handleExperienceSelect('Beginner')} disabled={isLoading}>
+
+              <div className="options-row" role="group" aria-label="Select experience level">
+                <button onClick={() => handleExperienceSelect('Beginner')} disabled={isLoading} aria-label="Start as a Beginner">
                   {isLoading ? 'Connecting...' : 'Beginner'}
                 </button>
-                <button onClick={() => handleExperienceSelect('Intermediate')} disabled={isLoading}>
+                <button onClick={() => handleExperienceSelect('Intermediate')} disabled={isLoading} aria-label="Start as Intermediate">
                   {isLoading ? 'Connecting...' : 'Intermediate'}
                 </button>
-                <button onClick={() => handleExperienceSelect('Expert')} disabled={isLoading}>
+                <button onClick={() => handleExperienceSelect('Expert')} disabled={isLoading} aria-label="Start as Expert">
                   {isLoading ? 'Connecting...' : 'Expert'}
                 </button>
               </div>
@@ -436,8 +447,8 @@ function App() {
           <section className="chat-container">
             <header className="chat-header">
               <span className="badge">Level: {experience}</span>
-              <select 
-                value={selectedModel} 
+              <select
+                value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
                 style={{ background: 'var(--card-bg)', color: 'white', border: '1px solid #475569', borderRadius: '8px', padding: '0.25rem 0.5rem', marginLeft: 'auto' }}
               >
@@ -446,8 +457,8 @@ function App() {
                 ))}
               </select>
             </header>
-            
-            <div className="chat-messages">
+
+            <div className="chat-messages" role="log" aria-live="polite" aria-label="Conversation history">
               {chatHistory.map((msg, idx) => (
                 <div key={idx} className={`message ${msg.role}`}>
                   <div className="message-content">
@@ -462,19 +473,25 @@ function App() {
                   </div>
                 </div>
               )}
-              <div ref={chatEndRef} />
+              <div ref={chatEndRef} aria-hidden="true" />
             </div>
 
-            <form onSubmit={sendMessage} className="chat-input-area">
-              <input 
-                type="text" 
+            <form onSubmit={sendMessage} className="chat-input-area" aria-label="Send a message">
+              <input
+                type="text"
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 placeholder="Ask me to explain any concept..."
                 disabled={isLoading}
                 required
+                aria-label="Type your question or answer here"
+                aria-disabled={isLoading}
               />
-              <button type="submit" disabled={isLoading || !inputMessage.trim()}>Send</button>
+              <button
+                type="submit"
+                disabled={isLoading || !inputMessage.trim()}
+                aria-label="Send message"
+              >Send</button>
             </form>
           </section>
         )}

@@ -24,6 +24,22 @@ if (!apiKey) {
     console.error("CRITICAL SECURITY ERROR: Gemini API Key is missing on the backend.");
 }
 
+// Helper function to handle Google's temporary 503 high demand spikes
+const generateWithRetry = async (model, prompt, retries = 3) => {
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await model.generateContent(prompt);
+        } catch (error) {
+            if (error.message && error.message.includes('503') && i < retries - 1) {
+                console.warn(`[API] Gemini 503 High Demand error. Retrying... (${i + 1}/${retries})`);
+                await new Promise(r => setTimeout(r, 2000)); // Wait 2 seconds before retrying
+            } else {
+                throw error;
+            }
+        }
+    }
+};
+
 /**
  * @route GET /api/models
  * @desc Retrieves available AI models dynamically based on the secure server key
@@ -62,7 +78,7 @@ app.post('/api/chat', async (req, res) => {
         const ai = new GoogleGenerativeAI(apiKey);
         const model = ai.getGenerativeModel({ model: selectedModel });
 
-        const result = await model.generateContent(finalPrompt);
+        const result = await generateWithRetry(model, finalPrompt);
         const responseText = result.response.text();
 
         res.json({ text: responseText });
@@ -94,7 +110,7 @@ app.post('/api/recommendations', async (req, res) => {
         // We use gemini-2.5-flash for incredibly fast recommendation generation
         const model = ai.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-        const result = await model.generateContent(prompt);
+        const result = await generateWithRetry(model, prompt);
         let responseText = result.response.text().trim();
 
         if (responseText.startsWith('```json')) {
