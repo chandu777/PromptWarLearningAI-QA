@@ -21,9 +21,9 @@ const __dirname = path.dirname(__filename);
 // ── Google Cloud Structured Logging ─────────────────────────────────────────
 // Cloud Run automatically ingests structured JSON logs into Google Cloud Logging
 const log = {
-  info:  (msg, data = {}) => console.log(JSON.stringify({ severity: 'INFO',    message: msg, ...data })),
-  warn:  (msg, data = {}) => console.log(JSON.stringify({ severity: 'WARNING', message: msg, ...data })),
-  error: (msg, data = {}) => console.log(JSON.stringify({ severity: 'ERROR',   message: msg, ...data })),
+    info: (msg, data = {}) => console.log(JSON.stringify({ severity: 'INFO', message: msg, ...data })),
+    warn: (msg, data = {}) => console.log(JSON.stringify({ severity: 'WARNING', message: msg, ...data })),
+    error: (msg, data = {}) => console.log(JSON.stringify({ severity: 'ERROR', message: msg, ...data })),
 };
 
 // SECURITY: The API Key is securely loaded from server memory / Cloud Secret Manager
@@ -52,20 +52,70 @@ const validateChatPayload = (selectedModel, finalPrompt) => {
     return null;
 };
 
-// Helper function to handle Google's temporary 503 high demand spikes
-const generateWithRetry = async (model, prompt, retries = 3) => {
-    for (let i = 0; i < retries; i++) {
+// Dynamically fetch all available models from the Google API
+const getAvailableModels = async () => {
+    try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        const data = await response.json();
+        if (data.error) throw new Error(data.error.message);
+        return data.models
+            .filter(m => m.supportedGenerationMethods.includes('generateContent'))
+            .map(m => m.name.replace('models/', ''))
+            // Prefer flash models first (faster/cheaper), then pro
+            .sort((a, b) => {
+                if (a.includes('flash') && !b.includes('flash')) return -1;
+                if (!a.includes('flash') && b.includes('flash')) return 1;
+                return 0;
+            });
+    } catch (e) {
+        log.error('Failed to fetch dynamic model list', { error: e.message });
+        return ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'];
+    }
+};
+
+// Helper function to handle 503 demand spikes, 429 quota exhaustion, and 404 unavailable models
+const generateWithRetry = async (ai, modelName, prompt) => {
+    // Always use a fresh dynamic list so we never try a model that doesn't exist
+    const modelFallbacks = await getAvailableModels();
+
+    // Put the requested model first if it's in the list
+    const preferred = modelFallbacks.filter(m => m === modelName);
+    const rest = modelFallbacks.filter(m => m !== modelName);
+    const orderedModels = [...preferred, ...rest];
+
+    for (const currentModel of orderedModels) {
         try {
-            return await model.generateContent(prompt);
+            const model = ai.getGenerativeModel({ model: currentModel });
+            const result = await model.generateContent(prompt);
+            if (currentModel !== modelName) {
+                log.warn('Model fallback used', { requested: modelName, used: currentModel });
+            }
+            return result;
         } catch (error) {
-            if (error.message && error.message.includes('503') && i < retries - 1) {
-                log.warn('Gemini 503 High Demand — retrying', { attempt: i + 1, maxRetries: retries });
+            const is429 = error.message && error.message.includes('429');
+            const is503 = error.message && error.message.includes('503');
+            const is404 = error.message && error.message.includes('404');
+
+            if (is429 || is404) {
+                const reason = is404 ? 'not available' : 'quota exhausted';
+                log.warn(`Model ${reason} — trying next`, { skipped: currentModel, reason });
+                continue; // Try next model in the dynamic list
+            } else if (is503) {
+                log.warn('Gemini 503 — retrying same model after 2s', { model: currentModel });
                 await new Promise(r => setTimeout(r, 2000));
+                try {
+                    const model = ai.getGenerativeModel({ model: currentModel });
+                    return await model.generateContent(prompt);
+                } catch (retryErr) {
+                    log.warn('Retry failed — moving to next model', { model: currentModel });
+                    continue;
+                }
             } else {
                 throw error;
             }
         }
     }
+    throw new Error('All available Gemini models are currently exhausted. Please try again later or check your quota at https://ai.dev/rate-limit.');
 };
 
 /**
@@ -109,9 +159,8 @@ app.post('/api/chat', async (req, res) => {
         }
 
         const ai = new GoogleGenerativeAI(apiKey);
-        const model = ai.getGenerativeModel({ model: selectedModel });
 
-        const result = await generateWithRetry(model, finalPrompt);
+        const result = await generateWithRetry(ai, selectedModel, finalPrompt);
         const responseText = result.response.text();
 
         log.info('Chat response generated', { model: selectedModel, responseLength: responseText.length });
@@ -150,9 +199,8 @@ app.post('/api/recommendations', async (req, res) => {
         }
 
         const ai = new GoogleGenerativeAI(apiKey);
-        const model = ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-        const result = await generateWithRetry(model, prompt);
+        const result = await generateWithRetry(ai, 'gemini-2.5-flash', prompt);
         let responseText = result.response.text().trim();
 
         if (responseText.startsWith('```json')) {
